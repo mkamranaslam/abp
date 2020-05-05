@@ -1,6 +1,6 @@
 {
   "name": "@abp/utils",
-  "version": "2.3.2",
+  "version": "2.6.2",
   "scripts": {
     "prepublish": "yarn install --ignore-scripts && node prepublish.js",
     "ng": "ng",
@@ -54,5 +54,6 @@
   },
   "dependencies": {
     "just-compare": "^1.3.0"
-  }
+  },
+  "gitHead": "eb4a0e507f492e275865b72caeb02ce28d69ae56"
 }

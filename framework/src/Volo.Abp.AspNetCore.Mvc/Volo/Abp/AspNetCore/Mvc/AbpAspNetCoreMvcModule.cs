@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ApplicationParts;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -11,15 +11,24 @@ using Microsoft.AspNetCore.Mvc.Razor.RuntimeCompilation;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Reflection;
+using Microsoft.AspNetCore.Mvc.ApiExplorer;
+using Microsoft.AspNetCore.Mvc.Razor;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.AspNetCore.Mvc.RazorPages.Infrastructure;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Localization;
 using Volo.Abp.ApiVersioning;
+using Volo.Abp.AspNetCore.Mvc.ApiExploring;
 using Volo.Abp.AspNetCore.Mvc.Conventions;
 using Volo.Abp.AspNetCore.Mvc.DependencyInjection;
 using Volo.Abp.AspNetCore.Mvc.Json;
 using Volo.Abp.AspNetCore.Mvc.Localization;
 using Volo.Abp.AspNetCore.VirtualFileSystem;
 using Volo.Abp.DependencyInjection;
+using Volo.Abp.Http;
+using Volo.Abp.DynamicProxy;
 using Volo.Abp.Http.Modeling;
 using Volo.Abp.Localization;
 using Volo.Abp.Modularity;
@@ -38,6 +47,9 @@ namespace Volo.Abp.AspNetCore.Mvc
     {
         public override void PreConfigureServices(ServiceConfigurationContext context)
         {
+            DynamicProxyIgnoreTypes.Add<ControllerBase>();
+            DynamicProxyIgnoreTypes.Add<PageModel>();
+
             context.Services.AddConventionalRegistrar(new AbpAspNetCoreMvcConventionalRegistrar());
         }
 
@@ -50,6 +62,25 @@ namespace Volo.Abp.AspNetCore.Mvc
                 options.IgnoredInterfaces.AddIfNotContains(typeof(IActionFilter));
             });
 
+            Configure<AbpRemoteServiceApiDescriptionProviderOptions>(options =>
+            {
+                var statusCodes = new List<int>
+                {
+                    (int) HttpStatusCode.Forbidden,
+                    (int) HttpStatusCode.Unauthorized,
+                    (int) HttpStatusCode.BadRequest,
+                    (int) HttpStatusCode.NotFound,
+                    (int) HttpStatusCode.NotImplemented,
+                    (int) HttpStatusCode.InternalServerError
+                };
+                
+                options.SupportedResponseTypes.AddIfNotContains(statusCodes.Select(statusCode => new ApiResponseType
+                {
+                    Type = typeof(RemoteServiceErrorResponse),
+                    StatusCode = statusCode
+                }));
+            });
+            
             context.Services.PostConfigure<AbpAspNetCoreMvcOptions>(options =>
             {
                 if (options.MinifyGeneratedScript == null)
@@ -60,8 +91,11 @@ namespace Volo.Abp.AspNetCore.Mvc
 
             var mvcCoreBuilder = context.Services.AddMvcCore();
             context.Services.ExecutePreConfiguredActions(mvcCoreBuilder);
-            
-            var abpMvcDataAnnotationsLocalizationOptions = context.Services.ExecutePreConfiguredActions(new AbpMvcDataAnnotationsLocalizationOptions());
+
+            var abpMvcDataAnnotationsLocalizationOptions = context.Services
+                .ExecutePreConfiguredActions(
+                    new AbpMvcDataAnnotationsLocalizationOptions()
+                );
 
             context.Services
                 .AddSingleton<IOptions<AbpMvcDataAnnotationsLocalizationOptions>>(
@@ -81,8 +115,17 @@ namespace Volo.Abp.AspNetCore.Mvc
                 {
                     options.DataAnnotationLocalizerProvider = (type, factory) =>
                     {
-                        var resourceType = abpMvcDataAnnotationsLocalizationOptions.AssemblyResources.GetOrDefault(type.Assembly);
-                        return factory.Create(resourceType ?? type);
+                        var resourceType = abpMvcDataAnnotationsLocalizationOptions
+                            .AssemblyResources
+                            .GetOrDefault(type.Assembly);
+
+                        if (resourceType != null)
+                        {
+                            return factory.Create(resourceType);
+                        }
+
+                        return factory.CreateDefaultOrNull() ?? 
+                               factory.Create(type);
                     };
                 })                
                 .AddViewLocalization(); //TODO: How to configure from the application? Also, consider to move to a UI module since APIs does not care about it.
@@ -107,6 +150,9 @@ namespace Volo.Abp.AspNetCore.Mvc
 
             //Use DI to create view components
             context.Services.Replace(ServiceDescriptor.Singleton<IViewComponentActivator, ServiceBasedViewComponentActivator>());
+
+            //Use DI to create razor page
+            context.Services.Replace(ServiceDescriptor.Singleton<IPageModelActivatorProvider, ServiceBasedPageModelActivatorProvider>());
 
             //Add feature providers
             var partManager = context.Services.GetSingletonInstance<ApplicationPartManager>();
